@@ -89,6 +89,40 @@ typedef struct
     bool                isPrinting;
     float               currentZ;
     bool                waitingForAck;
+    
+    // === Tick Statistics System ===
+    // The device tracks time between printer tick changes to help tune timeout settings.
+    // Statistics are collected across three overlapping phases:
+    // - Overall: All ticks throughout the entire print
+    // - Start Phase: Ticks within start_print_timeout (e.g., first 30 seconds)
+    // - First Layer: Ticks while currentLayer <= 1 (can overlap with start phase)
+    // - Later Layers: Ticks after first layer (currentLayer > 1)
+    //
+    // This allows users to see if different phases need different timeout values.
+    
+    // Overall tick statistics (all phases)
+    unsigned long       avgTimeBetweenTicks;  // Average time in milliseconds
+    unsigned long       minTickTime;          // Minimum time between ticks in milliseconds
+    unsigned long       maxTickTime;          // Maximum time between ticks in milliseconds
+    int                 tickSampleCount;      // Number of tick samples collected
+    
+    // Start phase statistics (within start_print_timeout from print start)
+    unsigned long       startAvgTickTime;     // Average tick time during start phase
+    unsigned long       startMinTickTime;     // Minimum tick time during start phase
+    unsigned long       startMaxTickTime;     // Maximum tick time during start phase
+    int                 startTickCount;       // Number of samples in start phase
+    
+    // First layer statistics (currentLayer <= 1, can overlap with start phase)
+    unsigned long       firstLayerAvgTickTime;  // Average tick time during first layer
+    unsigned long       firstLayerMinTickTime;  // Minimum tick time during first layer
+    unsigned long       firstLayerMaxTickTime;  // Maximum tick time during first layer
+    int                 firstLayerTickCount;    // Number of samples in first layer
+    
+    // Later layers statistics (currentLayer > 1)
+    unsigned long       laterLayersAvgTickTime; // Average tick time after first layer
+    unsigned long       laterLayersMinTickTime; // Minimum tick time after first layer
+    unsigned long       laterLayersMaxTickTime; // Maximum tick time after first layer
+    int                 laterLayersTickCount;   // Number of samples after first layer
 } printer_info_t;
 
 class ElegooCC
@@ -100,6 +134,7 @@ class ElegooCC
     String ipAddress;
 
     unsigned long lastPing;
+    unsigned long lastStatusPoll;
     // Variables to track movement sensor state
     int           lastMovementValue;  // Initialize to invalid value
     unsigned long lastChangeTime;
@@ -119,6 +154,31 @@ class ElegooCC
     bool                filamentRunout;
 
     unsigned long startedAt;
+
+    // Tick timing statistics - overall
+    unsigned long lastTickTime;
+    unsigned long totalTickTime;
+    int           tickCount;
+    unsigned long minTickTime;
+    unsigned long maxTickTime;
+
+    // Tick timing statistics - start phase (within start_print_timeout)
+    unsigned long startTotalTickTime;
+    int           startTickCount;
+    unsigned long startMinTickTime;
+    unsigned long startMaxTickTime;
+
+    // Tick timing statistics - first layer (layer <= 1)
+    unsigned long firstLayerTotalTickTime;
+    int           firstLayerTickCount;
+    unsigned long firstLayerMinTickTime;
+    unsigned long firstLayerMaxTickTime;
+
+    // Tick timing statistics - later layers (layer > 1)
+    unsigned long laterLayersTotalTickTime;
+    int           laterLayersTickCount;
+    unsigned long laterLayersMinTickTime;
+    unsigned long laterLayersMaxTickTime;
 
     // Acknowledgment tracking
     bool          waitingForAck;
@@ -157,6 +217,9 @@ class ElegooCC
 
     // Get current printer information
     printer_info_t getCurrentInformation();
+
+    // Reset device-side tick timing statistics (all phases)
+    void resetTickStats();  // Resets all tick statistics (overall + all three phases)
 };
 
 // Convenience macro for easier access

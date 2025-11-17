@@ -78,6 +78,10 @@ If you don't want to connect the device directly to the runout sensor, you may c
 
 ## WebUi
 
+
+**Important for Windows users:**
+The web UI build script uses Unix commands (`rm`, `cp`, `mv`, `find`, `gzip`). You must run the build in a Unix-like shell such as Git Bash or WSL. PowerShell and Command Prompt are not supported for this step.
+
 The WebUI shows the current status, whether filament has runout or stopped. It can be accessed by IP address or by going to [ccxsfs20.local](http://ccxsfs20.local) if you have mdns enabled on your network.
 
 ![ui screenshot](ui.png)
@@ -119,5 +123,8 @@ C++ code is a platformio project in `/src` folder. You can find more info [in th
 
 ### Web UI
 
-Web UI code is a [SolidJS](https://www.solidjs.com/) app with [vite](https://vite.dev/) in the `/webui` folder, it comes with a mock server. Just run `npm i && npm run dev` in the web folder.
-Use `npm run build` in the `/web` folder to copy code into the `/data` folder, followed by `Upload file sytem image` command from PlatformIO
+
+Web UI code is a [SolidJS](https://www.solidjs.com/) app with [vite](https://vite.dev/) in the `/webui` folder, it comes with a mock server. Just run `npm i && npm run dev` in the `/webui` folder.
+
+**To build for production:**
+Run `npm run build` in the `/webui` folder **using Git Bash or WSL**. This will copy the code into the `/data` folder. Then use the `Upload file system image` command from PlatformIO.

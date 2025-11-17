@@ -1,5 +1,6 @@
 import { A, useLocation } from '@solidjs/router'
 import { ParentProps } from 'solid-js'
+import Footer from './Footer'
 
 function App(props: ParentProps) {
   const location = useLocation()
@@ -42,6 +43,7 @@ function App(props: ParentProps) {
       <div class="w-full max-w-5xl bg-base-100 border-base-300 p-6">
         {props.children}
       </div>
+      <Footer />
     </div>
   )
 }

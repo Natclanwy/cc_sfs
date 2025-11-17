@@ -10,7 +10,7 @@
 // External function to get current time (from main.cpp)
 extern unsigned long getTime();
 
-ElegooCC &ElegooCC::getInstance()
+ElegooCC& ElegooCC::getInstance()
 {
     static ElegooCC instance;
     return instance;
@@ -33,6 +33,28 @@ ElegooCC::ElegooCC()
     filamentStopped   = false;
     filamentRunout    = false;
     lastPing          = 0;
+    lastStatusPoll    = 0;
+
+    lastTickTime  = 0;
+    totalTickTime = 0;
+    tickCount     = 0;
+    minTickTime   = 0;
+    maxTickTime   = 0;
+
+    startTotalTickTime = 0;
+    startTickCount     = 0;
+    startMinTickTime   = 0;
+    startMaxTickTime   = 0;
+
+    firstLayerTotalTickTime = 0;
+    firstLayerTickCount     = 0;
+    firstLayerMinTickTime   = 0;
+    firstLayerMaxTickTime   = 0;
+
+    laterLayersTotalTickTime = 0;
+    laterLayersTickCount     = 0;
+    laterLayersMinTickTime   = 0;
+    laterLayersMaxTickTime   = 0;
 
     waitingForAck       = false;
     pendingAckCommand   = -1;
@@ -43,7 +65,7 @@ ElegooCC::ElegooCC()
     // result. this will give us the printer IP address.
 
     // event handler - use lambda to capture 'this' pointer
-    webSocket.onEvent([this](WStype_t type, uint8_t *payload, size_t length)
+    webSocket.onEvent([this](WStype_t type, uint8_t* payload, size_t length)
                       { this->webSocketEvent(type, payload, length); });
 }
 
@@ -56,7 +78,7 @@ void ElegooCC::setup()
     }
 }
 
-void ElegooCC::webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
+void ElegooCC::webSocketEvent(WStype_t type, uint8_t* payload, size_t length)
 {
     switch (type)
     {
@@ -111,7 +133,7 @@ void ElegooCC::webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
     }
 }
 
-void ElegooCC::handleCommandResponse(JsonDocument &doc)
+void ElegooCC::handleCommandResponse(JsonDocument& doc)
 {
     String     id   = doc["Id"];
     JsonObject data = doc["Data"];
@@ -145,7 +167,7 @@ void ElegooCC::handleCommandResponse(JsonDocument &doc)
     }
 }
 
-void ElegooCC::handleStatus(JsonDocument &doc)
+void ElegooCC::handleStatus(JsonDocument& doc)
 {
     JsonObject status      = doc["Status"];
     String     mainboardId = doc["MainboardID"];
@@ -196,7 +218,90 @@ void ElegooCC::handleStatus(JsonDocument &doc)
         currentLayer  = printInfo["CurrentLayer"];
         totalLayer    = printInfo["TotalLayer"];
         progress      = printInfo["Progress"];
-        currentTicks  = printInfo["CurrentTicks"];
+        
+        int newTicks = printInfo["CurrentTicks"];
+        if (newTicks != currentTicks)
+        {
+            // Tick changed, update statistics
+            unsigned long now = millis();
+            if (lastTickTime > 0 && currentTicks > 0)
+            {
+                // Only calculate time difference if we have a previous valid tick
+                unsigned long timeSinceLastTick = now - lastTickTime;
+                
+                // Update overall statistics
+                totalTickTime += timeSinceLastTick;
+                tickCount++;
+                
+                if (minTickTime == 0 || timeSinceLastTick < minTickTime)
+                {
+                    minTickTime = timeSinceLastTick;
+                }
+                if (timeSinceLastTick > maxTickTime)
+                {
+                    maxTickTime = timeSinceLastTick;
+                }
+                
+                // === Per-Phase Tick Statistics Collection ===
+                // Track statistics for three phases to help users tune timeout values:
+                // 1. Start Phase: Early print behavior (within start_print_timeout)
+                // 2. First Layer: Layer 1 behavior (may overlap with start phase)
+                // 3. Later Layers: Subsequent layers after first
+                //
+                // Start phase and first layer can overlap - early ticks on layer 1 
+                // contribute to both statistics. This helps identify if the printer 
+                // behaves differently during initial startup vs. steady-state printing.
+                
+                unsigned long timeSinceStart = now - startedAt;
+                bool isStartPhase = timeSinceStart < settingsManager.getStartPrintTimeout();
+                bool isFirstLayer = (currentLayer <= 1);
+
+                // Record start-phase stats if within the initial window
+                if (isStartPhase)
+                {
+                    startTotalTickTime += timeSinceLastTick;
+                    startTickCount++;
+                    if (startMinTickTime == 0 || timeSinceLastTick < startMinTickTime)
+                    {
+                        startMinTickTime = timeSinceLastTick;
+                    }
+                    if (timeSinceLastTick > startMaxTickTime)
+                    {
+                        startMaxTickTime = timeSinceLastTick;
+                    }
+                }
+
+                // Independently track first layer vs later layers
+                if (isFirstLayer)
+                {
+                    firstLayerTotalTickTime += timeSinceLastTick;
+                    firstLayerTickCount++;
+                    if (firstLayerMinTickTime == 0 || timeSinceLastTick < firstLayerMinTickTime)
+                    {
+                        firstLayerMinTickTime = timeSinceLastTick;
+                    }
+                    if (timeSinceLastTick > firstLayerMaxTickTime)
+                    {
+                        firstLayerMaxTickTime = timeSinceLastTick;
+                    }
+                }
+                else
+                {
+                    laterLayersTotalTickTime += timeSinceLastTick;
+                    laterLayersTickCount++;
+                    if (laterLayersMinTickTime == 0 || timeSinceLastTick < laterLayersMinTickTime)
+                    {
+                        laterLayersMinTickTime = timeSinceLastTick;
+                    }
+                    if (timeSinceLastTick > laterLayersMaxTickTime)
+                    {
+                        laterLayersMaxTickTime = timeSinceLastTick;
+                    }
+                }
+            }
+            lastTickTime = now;
+        }
+        currentTicks = newTicks;
         totalTicks    = printInfo["TotalTicks"];
         PrintSpeedPct = printInfo["PrintSpeedPct"];
     }
@@ -311,6 +416,13 @@ void ElegooCC::loop()
             this->webSocket.sendTXT("ping");
             lastPing = currentTime;
         }
+
+        // Proactively request status at ~2.5s intervals to keep stats fresh
+        if (currentTime - lastStatusPoll > 2500)
+        {
+            sendCommand(SDCP_COMMAND_STATUS);
+            lastStatusPoll = currentTime;
+        }
     }
 
     // Before determining if we should pause, check if the filament is moving or it ran out
@@ -342,10 +454,10 @@ void ElegooCC::checkFilamentMovement(unsigned long currentTime)
 {
     int currentMovementValue = digitalRead(MOVEMENT_SENSOR_PIN);
 
-    // CurrentLayer is unreliable when using Orcaslicer 2.3.0, because it is missing some g-code,so
-    // we use Z instead. , assuming first layer is at Z offset <  0.1
-    int movementTimeout =
-        currentZ < 0.1 ? settingsManager.getFirstLayerTimeout() : settingsManager.getTimeout();
+    // Use currentLayer as primary indicator for first layer (more reliable than Z).
+    // Fall back to Z if layer info is unavailable.
+    bool isFirstLayer = (currentLayer <= 1) || (currentZ < 0.2);
+    int movementTimeout = isFirstLayer ? settingsManager.getFirstLayerTimeout() : settingsManager.getTimeout();
 
     // Check if movement sensor value has changed, if the filament is moving, it should change every
     // so often when it changes, reset the timeout
@@ -426,7 +538,7 @@ bool ElegooCC::hasMachineStatus(sdcp_machine_status_t status)
     return (machineStatusMask & (1 << status)) != 0;
 }
 
-void ElegooCC::setMachineStatuses(const int *statusArray, int arraySize)
+void ElegooCC::setMachineStatuses(const int* statusArray, int arraySize)
 {
     machineStatusMask = 0;  // Clear all statuses first
     for (int i = 0; i < arraySize; i++)
@@ -457,6 +569,51 @@ printer_info_t ElegooCC::getCurrentInformation()
     info.isWebsocketConnected = webSocket.isConnected();
     info.currentZ             = currentZ;
     info.waitingForAck        = waitingForAck;
+    // Overall tick statistics
+    info.avgTimeBetweenTicks  = (tickCount > 0) ? (totalTickTime / tickCount) : 0;
+    info.minTickTime          = minTickTime;
+    info.maxTickTime          = maxTickTime;
+    info.tickSampleCount      = tickCount;
+    // Start phase statistics
+    info.startAvgTickTime     = (startTickCount > 0) ? (startTotalTickTime / startTickCount) : 0;
+    info.startMinTickTime     = startMinTickTime;
+    info.startMaxTickTime     = startMaxTickTime;
+    info.startTickCount       = startTickCount;
+    // First layer statistics
+    info.firstLayerAvgTickTime = (firstLayerTickCount > 0) ? (firstLayerTotalTickTime / firstLayerTickCount) : 0;
+    info.firstLayerMinTickTime = firstLayerMinTickTime;
+    info.firstLayerMaxTickTime = firstLayerMaxTickTime;
+    info.firstLayerTickCount   = firstLayerTickCount;
+    // Later layers statistics
+    info.laterLayersAvgTickTime = (laterLayersTickCount > 0) ? (laterLayersTotalTickTime / laterLayersTickCount) : 0;
+    info.laterLayersMinTickTime = laterLayersMinTickTime;
+    info.laterLayersMaxTickTime = laterLayersMaxTickTime;
+    info.laterLayersTickCount   = laterLayersTickCount;
 
     return info;
+}
+
+void ElegooCC::resetTickStats()
+{
+    // Clear all tick-timing related statistics (overall and per-phase); preserve currentTicks values
+    lastTickTime  = 0;
+    totalTickTime = 0;
+    tickCount     = 0;
+    minTickTime   = 0;
+    maxTickTime   = 0;
+
+    startTotalTickTime = 0;
+    startTickCount     = 0;
+    startMinTickTime   = 0;
+    startMaxTickTime   = 0;
+
+    firstLayerTotalTickTime = 0;
+    firstLayerTickCount     = 0;
+    firstLayerMinTickTime   = 0;
+    firstLayerMaxTickTime   = 0;
+
+    laterLayersTotalTickTime = 0;
+    laterLayersTickCount     = 0;
+    laterLayersMinTickTime   = 0;
+    laterLayersMaxTickTime   = 0;
 }

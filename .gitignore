@@ -6,6 +6,9 @@
 data/assets/
 data/index.htm
 data/index.htm.gz
+data/firmware.bin
+data/littlefs.bin
+data/*.bin
 
 .DS_Store
 act/artifacts/

@@ -4,14 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node devServer.js",
-    "build": "tsc -b && vite build && rm -rf ../data/assets ../data/index.htm ../data/index.htm.gz  && cp -r dist/* ../data/ && mv ../data/index.html ../data/index.htm && find ../data -type f \\( -name '*.htm' -o -name '*.css' -o -name '*.js'  \\) -exec gzip -k {} \\;",
-    "preview": "vite preview"
+    "build": "tsc -b && vite build && node scripts/postbuild.mjs"
   },
   "dependencies": {
     "@solidjs/router": "^0.15.3",
     "@tailwindcss/vite": "^4.1.10",
-    "express": "^5.1.0",
     "radix-ui": "^1.4.2",
     "solid-js": "^1.9.5",
     "tailwindcss": "^4.1.10"

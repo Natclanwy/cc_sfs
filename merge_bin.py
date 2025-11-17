@@ -3,6 +3,48 @@ Import("env")
 import os
 from os.path import join
 
+# -------------------------------
+# Auto-increment firmware version
+# -------------------------------
+def _parse_semver(text, default=(2, 0, 0)):
+    try:
+        parts = [int(p) for p in str(text).strip().split(".")]
+        while len(parts) < 3:
+            parts.append(0)
+        return parts[0], parts[1], parts[2]
+    except Exception:
+        return default
+
+def bump_and_set_firmware_version(env):
+    project_dir = env.subst("$PROJECT_DIR")
+    version_file = os.path.join(project_dir, "FIRMWARE_VERSION.txt")
+
+    # Read current version or initialize
+    if os.path.exists(version_file):
+        with open(version_file, "r", encoding="utf-8") as f:
+            current = f.read().strip()
+    else:
+        current = "2.0.0"
+
+    major, minor, patch = _parse_semver(current)
+    # Increment patch on every build
+    patch += 1
+    new_version = f"{major}.{minor}.{patch}"
+
+    # Persist the bumped version
+    try:
+        with open(version_file, "w", encoding="utf-8") as f:
+            f.write(new_version)
+    except Exception as e:
+        print(f"Warning: could not write {version_file}: {e}")
+
+    # Inject into build as C define used by main.cpp/Web UI /version endpoint
+    env.Append(CPPDEFINES=[f'FIRMWARE_VERSION_RAW="{new_version}"'])
+    print(f"Firmware version set to {new_version}")
+
+# Perform the bump immediately so all compilation uses the new version
+bump_and_set_firmware_version(env)
+
 APP_BIN = "$BUILD_DIR/${PROGNAME}.bin"
 LITTLEFS_BIN = "$BUILD_DIR/littlefs.bin"
 MERGED_BIN = "$BUILD_DIR/${PROGNAME}_merged.bin"

@@ -1,5 +1,34 @@
+import { createSignal, onMount } from 'solid-js'
+
 function About() {
+  const [version, setVersion] = createSignal<string>('Loading...')
+  const [buildDate, setBuildDate] = createSignal<string>('')
+  const [chipFamily, setChipFamily] = createSignal<string>('')
+
+  onMount(async () => {
+    try {
+      const response = await fetch('/version')
+      if (response.ok) {
+        const data = await response.json()
+        setVersion(data.firmware_version || 'Unknown')
+        setBuildDate(data.build_date || '')
+        setChipFamily(data.chip_family || '')
+      }
+    } catch (error) {
+      console.error('Failed to fetch version:', error)
+      setVersion('Unknown')
+    }
+  })
+
   return <div>
+    <div class="mb-6 p-4 bg-base-200 rounded-lg">
+      <h2 class="text-lg font-bold mb-2">Firmware Information</h2>
+      <div class="text-sm space-y-1">
+        <p><span class="font-semibold">Version:</span> {version()}</p>
+        {chipFamily() && <p><span class="font-semibold">Chip:</span> {chipFamily()}</p>}
+        {buildDate() && <p><span class="font-semibold">Build Date:</span> {buildDate()}</p>}
+      </div>
+    </div>
     <p>This free and opensource software was made by <a class="link link-accent" href="https://github.com/jrowny">Jonathan Rowny</a> based on several amazing projects. It is in no way officially affiliated with Elegoo or BigTreeTech.</p>
     <h2 class="text-lg font-bold mt-4 mb-4">Credits</h2>
     <ul>

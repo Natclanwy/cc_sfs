@@ -4,15 +4,16 @@ function Settings() {
   const [ssid, setSsid] = createSignal('')
   const [password, setPassword] = createSignal('')
   const [elegooip, setElegooip] = createSignal('')
-  const [timeout, setTimeoutValue] = createSignal(2000)
-  const [firstLayerTimeout, setFirstLayerTimeout] = createSignal(4000)
-  const [startPrintTimeout, setStartPrintTimeout] = createSignal(10000)
+  const [timeout, setTimeoutValue] = createSignal<number | string>(2000)
+  const [firstLayerTimeout, setFirstLayerTimeout] = createSignal<number | string>(4000)
+  const [startPrintTimeout, setStartPrintTimeout] = createSignal<number | string>(10000)
   const [loading, setLoading] = createSignal(true)
   const [error, setError] = createSignal('')
   const [saveSuccess, setSaveSuccess] = createSignal(false)
   const [apMode, setApMode] = createSignal<boolean | null>(null);
   const [pauseOnRunout, setPauseOnRunout] = createSignal(true);
   const [enabled, setEnabled] = createSignal(true);
+  const [invalidFields, setInvalidFields] = createSignal<string[]>([]);
   // Load settings from the server and scan for WiFi networks
   onMount(async () => {
     try {
@@ -50,29 +51,130 @@ function Settings() {
     try {
       setSaveSuccess(false)
       setError('')
+      setInvalidFields([])
+
+      // Validate all numeric fields are present and in correct range
+      const errors: string[] = []
+      const invalid: string[] = []
+
+      const timeoutVal = timeout()
+      if (timeoutVal === '' || timeoutVal === undefined) {
+        errors.push('Movement Sensor Timeout is required')
+        invalid.push('timeout')
+      } else if (typeof timeoutVal === 'number' && (timeoutVal < 100 || timeoutVal > 30000)) {
+        errors.push(`Movement Sensor Timeout must be between 100 and 30000 ms (current: ${timeoutVal})`)
+        invalid.push('timeout')
+      }
+
+      const firstLayerTimeoutVal = firstLayerTimeout()
+      if (firstLayerTimeoutVal === '' || firstLayerTimeoutVal === undefined) {
+        errors.push('First Layer Timeout is required')
+        invalid.push('firstLayerTimeout')
+      } else if (typeof firstLayerTimeoutVal === 'number' && (firstLayerTimeoutVal < 100 || firstLayerTimeoutVal > 60000)) {
+        errors.push(`First Layer Timeout must be between 100 and 60000 ms (current: ${firstLayerTimeoutVal})`)
+        invalid.push('firstLayerTimeout')
+      }
+
+      const startPrintTimeoutVal = startPrintTimeout()
+      if (startPrintTimeoutVal === '' || startPrintTimeoutVal === undefined) {
+        errors.push('Start Print Timeout is required')
+        invalid.push('startPrintTimeout')
+      } else if (typeof startPrintTimeoutVal === 'number' && (startPrintTimeoutVal < 1000 || startPrintTimeoutVal > 60000)) {
+        errors.push(`Start Print Timeout must be between 1000 and 60000 ms (current: ${startPrintTimeoutVal})`)
+        invalid.push('startPrintTimeout')
+      }
+
+      if (errors.length > 0) {
+        setInvalidFields(invalid)
+        setError(errors.join('\n'))
+        return
+      }
 
       const settings = {
         ssid: ssid(),
         passwd: password(),
         ap_mode: false,
         elegooip: elegooip(),
-        timeout: timeout(),
-        first_layer_timeout: firstLayerTimeout(),
+        timeout: typeof timeoutVal === 'string' ? parseInt(timeoutVal) : timeoutVal,
+        first_layer_timeout: typeof firstLayerTimeoutVal === 'string' ? parseInt(firstLayerTimeoutVal) : firstLayerTimeoutVal,
         pause_on_runout: pauseOnRunout(),
-        start_print_timeout: startPrintTimeout(),
+        start_print_timeout: typeof startPrintTimeoutVal === 'string' ? parseInt(startPrintTimeoutVal) : startPrintTimeoutVal,
         enabled: enabled(),
       }
 
-      const response = await fetch('/update_settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(settings)
-      })
+      let lastError = ''
+      let saved = false
+      const maxRetries = 3
 
-      if (!response.ok) {
-        throw new Error(`Failed to save settings: ${response.status} ${response.statusText}`)
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const response = await fetch('/update_settings', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settings)
+          })
+
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          }
+
+          const responseData = await response.json()
+
+          if (!responseData.success) {
+            throw new Error('Server reported save failure')
+          }
+
+          // Validate that settings were actually saved by checking key values
+          const mismatch = []
+          if (responseData.settings.timeout !== timeoutVal) {
+            mismatch.push(`timeout (got ${responseData.settings.timeout}, expected ${timeoutVal})`)
+          }
+          if (responseData.settings.first_layer_timeout !== firstLayerTimeoutVal) {
+            mismatch.push(`first_layer_timeout (got ${responseData.settings.first_layer_timeout}, expected ${firstLayerTimeoutVal})`)
+          }
+          if (responseData.settings.pause_on_runout !== pauseOnRunout()) {
+            mismatch.push(`pause_on_runout (got ${responseData.settings.pause_on_runout}, expected ${pauseOnRunout()})`)
+          }
+          if (responseData.settings.start_print_timeout !== startPrintTimeoutVal) {
+            mismatch.push(`start_print_timeout (got ${responseData.settings.start_print_timeout}, expected ${startPrintTimeoutVal})`)
+          }
+          if (responseData.settings.enabled !== enabled()) {
+            mismatch.push(`enabled (got ${responseData.settings.enabled}, expected ${enabled()})`)
+          }
+          if (responseData.settings.elegooip !== elegooip()) {
+            mismatch.push(`elegooip (got ${responseData.settings.elegooip}, expected ${elegooip()})`)
+          }
+          if (responseData.settings.ssid !== ssid()) {
+            mismatch.push(`ssid (got ${responseData.settings.ssid}, expected ${ssid()})`)
+          }
+
+          if (mismatch.length > 0) {
+            if (attempt < maxRetries) {
+              lastError = `Validation failed: ${mismatch.join(', ')}. Retrying... (attempt ${attempt}/${maxRetries})`
+              console.warn(lastError)
+              await new Promise(resolve => setTimeout(resolve, 500 * attempt)) // Exponential backoff
+              continue
+            } else {
+              throw new Error(`Settings validation failed after ${maxRetries} attempts: ${mismatch.join(', ')}`)
+            }
+          }
+
+          // All validations passed
+          saved = true
+          break
+        } catch (err: any) {
+          lastError = err.message || 'Unknown error'
+          if (attempt < maxRetries) {
+            console.warn(`Save attempt ${attempt}/${maxRetries} failed: ${lastError}. Retrying...`)
+            await new Promise(resolve => setTimeout(resolve, 500 * attempt))
+          }
+        }
+      }
+
+      if (!saved) {
+        throw new Error(`Failed to save settings after ${maxRetries} attempts: ${lastError}`)
       }
 
       setSaveSuccess(true)
@@ -167,11 +269,11 @@ function Settings() {
               type="number"
               id="timeout"
               value={timeout()}
-              onInput={(e) => setTimeoutValue(parseInt(e.target.value) || 5000)}
+              onInput={(e) => setTimeoutValue(e.target.value)}
               min="100"
               max="30000"
               step="100"
-              class="input"
+              class={`input ${invalidFields().includes('timeout') ? 'input-error' : ''}`}
             />
             <p class="label">Value in milliseconds between reading from the movement sensor</p>
           </fieldset>
@@ -182,11 +284,11 @@ function Settings() {
               type="number"
               id="firstLayerTimeout"
               value={firstLayerTimeout()}
-              onInput={(e) => setFirstLayerTimeout(parseInt(e.target.value) || 4000)}
+              onInput={(e) => setFirstLayerTimeout(e.target.value)}
               min="100"
               max="60000"
               step="100"
-              class="input"
+              class={`input ${invalidFields().includes('firstLayerTimeout') ? 'input-error' : ''}`}
             />
             <p class="label">Timeout in milliseconds for first layer</p>
           </fieldset>
@@ -197,11 +299,11 @@ function Settings() {
               type="number"
               id="startPrintTimeout"
               value={startPrintTimeout()}
-              onInput={(e) => setStartPrintTimeout(parseInt(e.target.value) || 10000)}
+              onInput={(e) => setStartPrintTimeout(e.target.value)}
               min="1000"
               max="60000"
               step="1000"
-              class="input"
+              class={`input ${invalidFields().includes('startPrintTimeout') ? 'input-error' : ''}`}
             />
             <p class="label">Time in milliseconds to wait after print starts before allowing pause on filament runout</p>
           </fieldset>
